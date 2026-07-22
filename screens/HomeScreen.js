@@ -174,6 +174,6 @@ const styles = StyleSheet.create({
   dropdownLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   dropdownTitle: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
   dropdownSubtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  button: { backgroundColor: '#1a1a2e', paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginTop: 32, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 3 },
+  button: { backgroundColor: '#1e293b', paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginTop: 32, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 3 },
   buttonText: { fontSize: 16, fontWeight: '600', color: '#ffffff' },
 });

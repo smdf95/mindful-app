@@ -10,36 +10,41 @@ import {
   Platform,
   Animated,
   Dimensions,
+  Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications';
 import { syncReminders } from '../utils/notifications';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const STORAGE_KEY = '@mindful_app_reminders';
+const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 const DEFAULT_REMINDERS = [
-  { id: '1', hour: 9, minute: 0, enabled: true },
-  { id: '2', hour: 14, minute: 30, enabled: true },
-  { id: '3', hour: 20, minute: 0, enabled: false },
+  { id: '1', hour: 9, minute: 0, enabled: true, days: [0, 1, 2, 3, 4, 5, 6] },
+  { id: '2', hour: 14, minute: 30, enabled: true, days: [1, 2, 3, 4, 5] },
+  { id: '3', hour: 20, minute: 0, enabled: false, days: [0, 6] },
 ];
 
 export default function ReminderModal({ visible, onClose }) {
+  const [hasPermission, setHasPermission] = useState(true);
   const [reminders, setReminders] = useState(DEFAULT_REMINDERS);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerTime, setPickerTime] = useState(new Date());
   const [editingId, setEditingId] = useState(null);
+  const [expandedId, setExpandedId] = useState(null); // Track which row shows day selector
 
-  // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
 
   useEffect(() => {
     if (visible) {
+      checkPermissions();
       loadReminders();
 
-      // Animate In
       fadeAnim.setValue(0);
       slideAnim.setValue(SCREEN_HEIGHT);
 
@@ -58,7 +63,6 @@ export default function ReminderModal({ visible, onClose }) {
     }
   }, [visible]);
 
-  // Smooth Animate Out & Close
   function handleClose() {
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -74,15 +78,43 @@ export default function ReminderModal({ visible, onClose }) {
     ]).start(() => {
       setShowPicker(false);
       setEditingId(null);
+      setExpandedId(null);
       onClose();
     });
+  }
+
+  async function checkPermissions() {
+    try {
+      const { status } = await Notifications.getPermissionsAsync();
+      setHasPermission(status === 'granted');
+    } catch (error) {
+      console.error('Failed to check permissions:', error);
+    }
+  }
+
+  async function handleRequestPermission() {
+    try {
+      const { status, canAskAgain } = await Notifications.requestPermissionsAsync();
+      if (status === 'granted') {
+        setHasPermission(true);
+      } else if (!canAskAgain) {
+        Linking.openSettings();
+      }
+    } catch (error) {
+      console.error('Failed to request permissions:', error);
+    }
   }
 
   async function loadReminders() {
     try {
       const saved = await AsyncStorage.getItem(STORAGE_KEY);
       if (saved !== null) {
-        setReminders(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        const sorted = [...parsed].sort((a, b) => {
+          if (a.hour === b.hour) return a.minute - b.minute;
+          return a.hour - b.hour;
+        });
+        setReminders(sorted);
       }
     } catch (error) {
       console.error('Failed to load reminders:', error);
@@ -92,9 +124,7 @@ export default function ReminderModal({ visible, onClose }) {
   async function saveAndSync(updatedReminders) {
     try {
       const sorted = [...updatedReminders].sort((a, b) => {
-        if (a.hour === b.hour) {
-          return a.minute - b.minute;
-        }
+        if (a.hour === b.hour) return a.minute - b.minute;
         return a.hour - b.hour;
       });
 
@@ -115,6 +145,22 @@ export default function ReminderModal({ visible, onClose }) {
 
   async function deleteReminder(id) {
     const updated = reminders.filter((item) => item.id !== id);
+    if (expandedId === id) setExpandedId(null);
+    await saveAndSync(updated);
+  }
+
+  async function toggleDay(reminderId, dayIndex) {
+    const updated = reminders.map((item) => {
+      if (item.id !== reminderId) return item;
+
+      const currentDays = item.days || [0, 1, 2, 3, 4, 5, 6];
+      const newDays = currentDays.includes(dayIndex)
+        ? currentDays.filter((d) => d !== dayIndex)
+        : [...currentDays, dayIndex];
+
+      return { ...item, days: newDays };
+    });
+
     await saveAndSync(updated);
   }
 
@@ -124,10 +170,26 @@ export default function ReminderModal({ visible, onClose }) {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
+  function getRepeatText(days = [0, 1, 2, 3, 4, 5, 6]) {
+    if (days.length === 7) return 'Every day';
+    if (days.length === 0) return 'Never';
+    if (days.length === 5 && !days.includes(0) && !days.includes(6)) return 'Weekdays';
+    if (days.length === 2 && days.includes(0) && days.includes(6)) return 'Weekends';
+
+    return days
+      .sort((a, b) => a - b)
+      .map((d) => DAYS_OF_WEEK[d])
+      .join(', ');
+  }
+
+  function handleRowPress(reminder) {
+    // Toggle expand for day selection
+    setExpandedId(expandedId === reminder.id ? null : reminder.id);
+  }
+
   function handleOpenAddPicker() {
     setEditingId(null);
-    const now = new Date();
-    setPickerTime(now);
+    setPickerTime(new Date());
     setShowPicker(true);
   }
 
@@ -173,6 +235,7 @@ export default function ReminderModal({ visible, onClose }) {
         hour: date.getHours(),
         minute: date.getMinutes(),
         enabled: true,
+        days: [0, 1, 2, 3, 4, 5, 6],
       };
       updated = [...reminders, newReminder];
     }
@@ -191,7 +254,6 @@ export default function ReminderModal({ visible, onClose }) {
       statusBarTranslucent={true}
     >
       <View style={styles.overlay}>
-        {/* Animated Fading Backdrop */}
         <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]}>
           <TouchableOpacity
             style={StyleSheet.absoluteFillObject}
@@ -200,7 +262,6 @@ export default function ReminderModal({ visible, onClose }) {
           />
         </Animated.View>
 
-        {/* Animated Sliding Bottom Sheet */}
         <Animated.View
           style={[
             styles.sheet,
@@ -214,35 +275,91 @@ export default function ReminderModal({ visible, onClose }) {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.subtitle}>Tap a time to edit it, or add new reminders.</Text>
+          <Text style={styles.subtitle}>Tap a reminder to edit days, or tap the time to edit clock.</Text>
 
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-            {reminders.map((item) => (
-              <View key={item.id} style={styles.reminderRow}>
-                <TouchableOpacity
-                  style={styles.timeInfo}
-                  onPress={() => handleOpenEditPicker(item)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.timeText, !item.enabled && styles.disabledText]}>
-                    {formatTime(item.hour, item.minute)}
-                  </Text>
-                  <Text style={styles.repeatText}>Every day • Tap to edit</Text>
-                </TouchableOpacity>
-
-                <View style={styles.rowActions}>
-                  <Switch
-                    value={item.enabled}
-                    onValueChange={() => toggleReminder(item.id)}
-                    trackColor={{ false: '#cbd5e1', true: '#93c5fd' }}
-                    thumbColor={item.enabled ? '#3b82f6' : '#f8fafc'}
-                  />
-                  <TouchableOpacity onPress={() => deleteReminder(item.id)} style={styles.deleteBtn}>
-                    <Ionicons name="trash-outline" size={20} color="#ef4444" />
-                  </TouchableOpacity>
+            {!hasPermission && (
+              <TouchableOpacity 
+                style={styles.permissionBanner} 
+                onPress={handleRequestPermission}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="warning-outline" size={20} color="#b45309" />
+                <View style={styles.permissionTextContainer}>
+                  <Text style={styles.permissionTitle}>Notifications are turned off</Text>
+                  <Text style={styles.permissionSubtitle}>Tap here to enable them in settings.</Text>
                 </View>
-              </View>
-            ))}
+              </TouchableOpacity>
+            )}
+
+            {reminders.map((item) => {
+              const isExpanded = expandedId === item.id;
+              const activeDays = item.days || [0, 1, 2, 3, 4, 5, 6];
+
+              return (
+                <View key={item.id} style={[styles.reminderCard, !hasPermission && styles.disabledRow]}>
+                  {/* Primary Row */}
+                  <View style={styles.reminderRow}>
+                    <TouchableOpacity
+                      style={styles.timeInfo}
+                      onPress={() => hasPermission && handleRowPress(item)}
+                      disabled={!hasPermission}
+                      activeOpacity={0.7}
+                    >
+                      <TouchableOpacity
+                        onPress={() => hasPermission && handleOpenEditPicker(item)}
+                        disabled={!hasPermission}
+                      >
+                        <Text style={[styles.timeText, (!item.enabled || !hasPermission) && styles.disabledText]}>
+                          {formatTime(item.hour, item.minute)}
+                        </Text>
+                      </TouchableOpacity>
+                      
+                      <Text style={styles.repeatText}>
+                        {getRepeatText(activeDays)} • Tap to customize
+                      </Text>
+                    </TouchableOpacity>
+
+                    <View style={styles.rowActions}>
+                      <Switch
+                        value={item.enabled && hasPermission}
+                        disabled={!hasPermission}
+                        onValueChange={() => toggleReminder(item.id)}
+                        trackColor={{ false: '#cbd5e1', true: '#93c5fd' }}
+                        thumbColor={item.enabled && hasPermission ? '#3b82f6' : '#f8fafc'}
+                      />
+                      <TouchableOpacity 
+                        onPress={() => deleteReminder(item.id)} 
+                        style={styles.deleteBtn}
+                      >
+                        <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Expandable Days Selector */}
+                  {isExpanded && hasPermission && (
+                    <View style={styles.daysRow}>
+                      {DAY_LABELS.map((dayLabel, index) => {
+                        const isSelected = activeDays.includes(index);
+                        return (
+                          <TouchableOpacity
+                            key={index}
+                            style={[styles.dayChip, isSelected && styles.dayChipSelected]}
+                            onPress={() => toggleDay(item.id, index)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[styles.dayChipText, isSelected && styles.dayChipTextSelected]}>
+                              {dayLabel}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
 
             <TouchableOpacity style={styles.addButton} onPress={handleOpenAddPicker}>
               <Ionicons name="add-circle-outline" size={22} color="#3b82f6" />
@@ -297,13 +414,56 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 13, color: '#64748b', marginBottom: 16 },
   doneButton: { fontSize: 16, fontWeight: '600', color: '#3b82f6' },
   list: { paddingBottom: 20 },
-  reminderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#e2e8f0' },
+  permissionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fef3c7',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 16,
+    gap: 10,
+  },
+  permissionTextContainer: { flex: 1 },
+  permissionTitle: { fontSize: 13, fontWeight: '600', color: '#92400e' },
+  permissionSubtitle: { fontSize: 12, color: '#b45309' },
+  disabledRow: { opacity: 0.5 },
+  reminderCard: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e2e8f0',
+    paddingVertical: 12,
+  },
+  reminderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   timeInfo: { flex: 1, gap: 2 },
   timeText: { fontSize: 22, fontWeight: '600', color: '#0f172a' },
   disabledText: { color: '#94a3b8' },
   repeatText: { fontSize: 12, color: '#64748b' },
   rowActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   deleteBtn: { padding: 4 },
+  daysRow: {
+    flexDirection: 'row',
+    justify: 'space-between',
+    marginTop: 12,
+    paddingTop: 8,
+  },
+  dayChip: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayChipSelected: {
+    backgroundColor: '#3b82f6',
+  },
+  dayChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  dayChipTextSelected: {
+    color: '#ffffff',
+  },
   addButton: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 16, marginTop: 8 },
   addButtonText: { fontSize: 16, fontWeight: '600', color: '#3b82f6' },
   pickerContainer: { backgroundColor: '#f8fafc', borderRadius: 16, padding: 12, marginTop: 8 },
