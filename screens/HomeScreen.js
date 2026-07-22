@@ -43,7 +43,7 @@ export default function HomeScreen({ navigation }) {
   }
 
   const selectedMeditation = meditationId === 'random' 
-    ? { title: 'Surprise Me', icon: 'random' }
+    ? { title: 'Surprise Me', icon: 'random', subtitle: 'Get a random meditation' }
     : meditations.find((m) => m.id === meditationId);
 
   return (

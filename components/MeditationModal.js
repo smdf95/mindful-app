@@ -121,6 +121,7 @@ export default function MeditationModal({ visible, selectedId, onSelect, onClose
               {renderIcon('random', 24, selectedId === 'random' ? '#3b82f6' : '#64748b')}
               <View style={styles.optionTextContainer}>
                 <Text style={styles.optionTitle}>Surprise Me</Text>
+                <Text style={styles.optionSubtitle}>Get a random meditation</Text>
               </View>
               {selectedId === 'random' && <Ionicons name="checkmark" size={20} color="#3b82f6" />}
             </TouchableOpacity>
